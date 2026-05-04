@@ -1,0 +1,8 @@
+.venv/
+venv/
+**/__pycache__/
+/temp_pipeline
+pretrained_models/
+
+*.mp4
+TODO.txt
