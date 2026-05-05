@@ -2,7 +2,7 @@
 
 Automated pipeline to generate alpha matte masks of a subject and pack them into FISHEYE190 VR video. Uses MatAnyone2 for masking, and finetuned SAM3 for automated person detection and accurate first-frame mask generation
 
---- HERE VIDEO SAMPLE ---
+https://github.com/user-attachments/assets/a7d56c29-3daa-4a41-996f-2cd392c2e65f
 
 ## Structure
 
