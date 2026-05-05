@@ -1,6 +1,6 @@
 # VR Masking Tools
 
-Automated pipeline to generate alpha matte masks of a subject and pack them into FISHEYE190 VR video. Uses MatAnyone2 for masking, and fine-tuned SAM3 for automated person detection and accurate first-frame mask generation
+Automated pipeline to generate alpha matte masks of a subject and pack them into FISHEYE190 VR video. Uses MatAnyone2 for masking, and finetuned SAM3 for automated person detection and accurate first-frame mask generation
 
 --- HERE VIDEO SAMPLE ---
 
@@ -23,51 +23,51 @@ You can run this code on Linux and WSL2, except for `fisheye190_converter.py`, w
 
 - Pip and venv:
   ```bash
-  sudo apt install -y tmux python3-pip python3-venv
+  sudo apt install -y python3-pip python3-venv
   ```
 
 - FFmpeg 8 with NVENC/NVDEC/CUDA and OpenCL support
 
-<details>
-<summary>FFmpeg 8 installation commands</summary>
+  <details>
+  <summary>FFmpeg 8 Linux installation commands</summary>
 
-```bash
-sudo apt update
-sudo apt install -y build-essential pkg-config git nasm yasm cmake libtool \
-  libssl-dev zlib1g-dev libnuma-dev ocl-icd-opencl-dev \
-  libx264-dev libx265-dev libvpx-dev libmp3lame-dev libopus-dev libvorbis-dev \
-  libass-dev libfreetype6-dev libfdk-aac-dev
+  ```bash
+  sudo apt update
+  sudo apt install -y build-essential pkg-config git nasm yasm cmake libtool \
+    libssl-dev zlib1g-dev libnuma-dev ocl-icd-opencl-dev \
+    libx264-dev libx265-dev libvpx-dev libmp3lame-dev libopus-dev libvorbis-dev \
+    libass-dev libfreetype6-dev libfdk-aac-dev
 
-mkdir -p ~/ffmpeg_sources && cd ~/ffmpeg_sources
+  mkdir -p ~/ffmpeg_sources && cd ~/ffmpeg_sources
 
-git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.git
-cd nv-codec-headers && sudo make install && cd ..
+  git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.git
+  cd nv-codec-headers && sudo make install && cd ..
 
-git clone -b release/8.0 https://github.com/FFmpeg/FFmpeg.git ffmpeg
-cd ffmpeg
+  git clone -b release/8.0 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+  cd ffmpeg
 
-CUDA_HOME=/usr/local/cuda
-CCAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '. ')
+  CUDA_HOME=/usr/local/cuda
+  CCAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '. ')
 
-./configure --prefix=/usr/local --bindir=/usr/local/bin \
-  --enable-gpl --enable-version3 --enable-openssl \
-  --enable-nonfree --enable-libfdk-aac \
-  --enable-libx264 --enable-libx265 --enable-libvpx \
-  --enable-libmp3lame --enable-libopus --enable-libvorbis \
-  --enable-libass --enable-libfreetype \
-  --enable-cuda-nvcc --enable-nvenc --enable-nvdec --enable-cuvid \
-  --enable-opencl \
-  --extra-cflags="-I${CUDA_HOME}/include" \
-  --extra-ldflags="-L${CUDA_HOME}/lib64" \
-  --nvccflags="-gencode arch=compute_${CCAP},code=sm_${CCAP} -O2"
+  ./configure --prefix=/usr/local --bindir=/usr/local/bin \
+    --enable-gpl --enable-version3 --enable-openssl \
+    --enable-nonfree --enable-libfdk-aac \
+    --enable-libx264 --enable-libx265 --enable-libvpx \
+    --enable-libmp3lame --enable-libopus --enable-libvorbis \
+    --enable-libass --enable-libfreetype \
+    --enable-cuda-nvcc --enable-nvenc --enable-nvdec --enable-cuvid \
+    --enable-opencl \
+    --extra-cflags="-I${CUDA_HOME}/include" \
+    --extra-ldflags="-L${CUDA_HOME}/lib64" \
+    --nvccflags="-gencode arch=compute_${CCAP},code=sm_${CCAP} -O2"
 
-make -j"$(nproc)"
-sudo make install
-sudo ldconfig
-hash -r
-```
+  make -j"$(nproc)"
+  sudo make install
+  sudo ldconfig
+  hash -r
+  ```
 
-</details>
+  </details>
 
 ### Instructions
 
@@ -83,30 +83,30 @@ pip install -r requirements.txt
 
 ### Troubleshooting
 
-- Check that your system has NVIDIA drivers:
-  ```bash
-  nvidia-smi
-  ```
+Check that your system has NVIDIA drivers:
+```bash
+nvidia-smi
+```
 
-- Check that your system has CUDA Toolkit 13 or up:
-  ```bash
-  nvcc --version
-  ```
+Check that your system has CUDA Toolkit 13 or up:
+```bash
+nvcc --version
+```
 
-- Check that you have FFmpeg 8 installed:
-  ```bash
-  ffmpeg -version
-  ```
+Check that you have FFmpeg 8 installed:
+```bash
+ffmpeg -version
+```
 
-- Check that your FFmpeg has the required encoders:
-  ```bash
-  ffmpeg -encoders | grep nvenc
-  ```
+Check that your FFmpeg has the required encoders:
+```bash
+ffmpeg -encoders | grep nvenc
+```
 
-- Check that your FFmpeg has OpenCL support (only needed for VR180 to FISHEYE190 conversion):
-  ```bash
-  ffmpeg -filters | grep opencl
-  ```
+Check that your FFmpeg has OpenCL support (only needed for VR180 to FISHEYE190 conversion):
+```bash
+ffmpeg -filters | grep opencl
+```
 
 ## Docker
 
@@ -132,11 +132,13 @@ python pipeline.py video.mp4
 
 - `--intro-end` : (default: auto) The pipeline automatically detects the end of the intro when the subject enters the frame. If your intro always finishes at the same time and you want to skip that part, you can set the intro end time in seconds with this flag
 
-- `--prompt` : (default: "woman") SAM3 prompt for automatic subject detection. Since this model is fine-tuned for women, you shouldn't use this flag unless you've replaced the `sam3_finetuned.pth` weights with SAM3's base weights. From my own experience however, the results for other prompts with the base weights aren't good enough for VR video
+- `--prompt` : (default: "woman") SAM3 prompt for automatic subject detection. Since this model is finetuned for women, **you shouldn't use this flag** unless you've replaced the `sam3_finetuned.pth` weights with SAM3's base weights. From my own experience however, the results for other prompts with the base weights aren't consistent enough for VR video
 
 Masking speed is dependent on the size of the mask. I recommend 960, 1120, 1280 or 1440 for mask size, and enabling `--center-crop`.
-* On an RTX 3070, with `--mask-height 1280` and `--center-crop` enabled, you can expect masking speeds of ~6 fps. When you add the initial segment cutting, resizing, SAM3 first-frame mask generation, and final concat, this results in ~2 hours of masking for a 10-minute 60 fps video. With 8GB of VRAM, you can't go above 1280px mask height with `--center-crop` enabled, or 1120px with it disabled.
-* On an RTX 5090 or RTX 6000 Ada, you can expect masking speeds of ~15 fps at 1280px and `--center-crop` enabled. This results in ~50 minutes of masking for a 10-minute 60 fps video
+
+On an RTX 3070, with `--mask-height 1280` and `--center-crop` enabled, you can expect masking speeds of ~6 fps. When you add the initial segment cutting, resizing, SAM3 first-frame mask generation, and final concat, this results in ~2 hours of masking for a 10-minute 60 fps video. With 8GB of VRAM, you can't go above 1280px mask height with `--center-crop` enabled, or 1120px with it disabled.
+
+On an RTX 5090 or RTX 6000 Ada, you can expect masking speeds of ~15 fps at 1280px and `--center-crop` enabled. This results in ~50 minutes of masking for a 10 minute 60 fps video
 
 ### alpha_packer.py
 
