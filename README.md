@@ -129,7 +129,7 @@ python pipeline.py video.mp4
 
 **Flags:**
 
-- `--center-crop` : (default: disabled) Crops 10% from each side of the video before masking. Since FISHEYE190 video is 2 circles, I **highly recommend** using this flag. It results in **70% faster masking** and **-50% VRAM usage**. I would only not enable it if the video's subject often gets close to the up/down left/right edges of the circle
+- `--center-crop` : (default: disabled) Crops 10% from each side of the video before masking. I **highly recommend** using this flag. It results in **70% faster masking** and **-50% VRAM usage**. I would only not enable it if the video's subject often gets close to the up/down left/right edges of the circles
 
 - `--mask-height` : (default: 1280, min: 640, max: 1600) Height of the mask in pixels. It accepts multiples of 16. My recommendation is leaving it at the default 1280. Below that, you'll get faster masking but lower mask quality. Above that, you'll get marginal improvements at significantly slower speeds
 
@@ -137,11 +137,9 @@ python pipeline.py video.mp4
 
 - `--prompt` : (default: "woman") SAM3 prompt for automatic subject detection. Since this model is finetuned for women, **you shouldn't use this flag** unless you've replaced the `sam3_finetuned.pth` weights with SAM3's base weights. From my own experience however, the results for other prompts with the base weights aren't consistent enough for VR video
 
-Masking speed is dependent on the size of the mask. I recommend 960, 1120, 1280 or 1440 for mask size, and enabling `--center-crop`.
+On an RTX 3070, with `--mask-height 1280` and `--center-crop` enabled, expect masking speeds of ~6 fps. With all the other steps, this results in ~2 hours of masking for a 10 minute 60fps video. With 8GB of VRAM, you can't go above 1280px mask height with `--center-crop` enabled, or 1120px with it disabled
 
-On an RTX 3070, with `--mask-height 1280` and `--center-crop` enabled, you can expect masking speeds of ~6 fps. When you add the initial segment cutting, resizing, SAM3 first-frame mask generation, and final concat, this results in ~2 hours of masking for a 10-minute 60 fps video. With 8GB of VRAM, you can't go above 1280px mask height with `--center-crop` enabled, or 1120px with it disabled.
-
-On an RTX 5090 or RTX 6000 Ada, you can expect masking speeds of ~15 fps at 1280px and `--center-crop` enabled. This results in ~50 minutes of masking for a 10 minute 60 fps video
+On an RTX 5090 or RTX 6000 Ada, you can expect masking speeds of ~15 fps at 1280px and `--center-crop` enabled. This results in ~50 minutes of masking for a 10 minute 60fps video
 
 ### alpha_packer.py
 
@@ -153,9 +151,9 @@ python alpha_packer.py mask.mp4 video.mp4
 
 **Flags:**
 
-- `--quality` : (default: high) FFmpeg cq settings for video encoding. Higher means better quality but larger file size. `ultra=18`, `high=24`, `normal=26`, `low=28`
+- `--quality` : (default: high) FFmpeg cq settings for video encoding. Higher = better quality, larger file size. `ultra=18`, `high=24`, `normal=26`, `low=28`
 
-- `--speed` : (default: normal) FFmpeg preset settings for video encoding. Slower means slower encoding but better quality. `slow=p6`, `normal=p4`, `fast=p2`
+- `--speed` : (default: normal) FFmpeg preset settings for video encoding. Slower = slower encoding, better quality. `slow=p6`, `normal=p4`, `fast=p2`
 
 - `--sync` : (default: disabled) Sync shifts the mask by N frames before packing. Only change it if the resulting mask isn't perfectly synced with the video. Positive = mask catches up (plays earlier), negative = mask delayed (plays later)
 
@@ -169,11 +167,11 @@ python fisheye190_converter.py video.mp4
 
 **Flags:**
 
-- `--quality` : (default: high) FFmpeg cq settings for video encoding. Higher means better quality but larger file size. `ultra=18`, `high=24`, `normal=26`, `low=28`
+- `--quality` : (default: high) FFmpeg cq settings for video encoding. Higher = better quality, larger file size. `ultra=18`, `high=24`, `normal=26`, `low=28`
 
-- `--speed` : (default: normal) FFmpeg preset settings for video encoding. Slower means slower encoding but better quality. `slow=p6`, `normal=p4`, `fast=p2`
+- `--speed` : (default: normal) FFmpeg preset settings for video encoding. Slower = slower encoding, better quality. `slow=p6`, `normal=p4`, `fast=p2`
 
-- `--interp` : (default: lanczos) FFmpeg remap interpolation algorithm. Lanczos is the highest quality. You can use bilinear or bicubic too, but the speeds don't change much
+- `--interp` : (default: lanczos) Interpolation algorithm. Lanczos is the highest quality. You can use bilinear or bicubic too, but the speeds don't change much
 
 ### accurate_cut.py
 
