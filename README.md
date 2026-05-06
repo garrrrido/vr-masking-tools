@@ -4,13 +4,6 @@ Automated pipeline to generate alpha matte masks of a subject and pack them into
 
 <img width="1430" height="360" alt="banner_gif" src="https://github.com/user-attachments/assets/35a51c45-79e1-4901-bdf1-5f0f722e2749" />
 
-`pipeline.py`: Generates a mask for a given video
-
-`alpha_packer.py`: Packs alpha masks into FISHEYE190 video
-
-`fisheye190_converter.py`: Converts VR180 video to FISHEYE190 for packing the alpha mask
-
-`accurate_cut.py`: Cuts videos
 
 ## Installation
 
@@ -115,6 +108,11 @@ ffmpeg -filters | grep opencl
 https://github.com/user-attachments/assets/a7d56c29-3daa-4a41-996f-2cd392c2e65f
 
 In order to pack an alpha mask into a video, the video must be in FISHEYE190 format. If it's in VR180 format, you can convert it with `fisheye190_converter.py`. Then, generate a mask for that FISHEYE190 video with `pipeline.py`. Use `alpha_packer.py` to pack the alpha mask into the edges of the video so that you can view it on VR players like DeoVR. Since masking takes a long time, I included `accurate_cut.py` so you can cut a shorter segment first to use it for testing
+
+- `pipeline.py`: Generates a mask for a given video
+- `alpha_packer.py`: Packs alpha masks into FISHEYE190 video
+- `fisheye190_converter.py`: Converts VR180 video to FISHEYE190 for packing the alpha mask
+- `accurate_cut.py`: Cuts videos
 
 ### pipeline.py
 
