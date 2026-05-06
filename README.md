@@ -13,7 +13,7 @@ Automated pipeline to generate alpha matte masks of a subject and pack them into
 
 ## Installation
 
-You can run this code on Linux and WSL2, except for `fisheye190_converter.py`, which runs on Linux and Windows, but not WSL2. A separate repo for the fisheye converter is available here (link) in case you want a Windows standalone installation for it
+You can run all scripts on Linux and WSL2, except for `fisheye190_converter.py`, which runs on Linux and Windows, but not WSL2. A separate repo for the fisheye converter is [available here](https://github.com/garrrrido/fisheye-converter) in case you want a Windows standalone installation for it
 
 ### Prerequisites
 
