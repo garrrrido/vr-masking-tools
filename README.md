@@ -75,34 +75,6 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Troubleshooting
-
-Check that your system has NVIDIA drivers:
-```bash
-nvidia-smi
-```
-
-Check that your system has CUDA Toolkit 13 or up:
-```bash
-nvcc --version
-```
-
-Check that you have FFmpeg 8 installed:
-```bash
-ffmpeg -version
-```
-
-
-Check that your FFmpeg has the required encoders:
-```bash
-ffmpeg -encoders | grep nvenc
-```
-
-Check that your FFmpeg has OpenCL support (only needed for VR180 to FISHEYE190 conversion):
-```bash
-ffmpeg -filters | grep opencl
-```
-
 ## Usage
 
 https://github.com/user-attachments/assets/a7d56c29-3daa-4a41-996f-2cd392c2e65f
@@ -181,6 +153,34 @@ Create a `cuts.txt` file in the script's directory with the following format. Th
 
 ```bash
 python accurate_cut.py video.mp4
+```
+
+### Troubleshooting
+
+Check that your system has NVIDIA drivers:
+```bash
+nvidia-smi
+```
+
+Check that your system has CUDA Toolkit 13 or up:
+```bash
+nvcc --version
+```
+
+Check that you have FFmpeg 8 installed:
+```bash
+ffmpeg -version
+```
+
+
+Check that your FFmpeg has the required encoders:
+```bash
+ffmpeg -encoders | grep nvenc
+```
+
+Check that your FFmpeg has OpenCL support (only needed for VR180 to FISHEYE190 conversion):
+```bash
+ffmpeg -filters | grep opencl
 ```
 
 ## License
