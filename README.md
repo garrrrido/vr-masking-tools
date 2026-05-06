@@ -179,7 +179,7 @@ python fisheye190_converter.py video.mp4
 
 Use it to cut and concatenate segments from a video. Great for testing the other scripts with shorter scenes
 
-Create a `cuts.txt` file in the script's directory with the following format. The content between the first and second timestamps will be included in the output video
+Create a `cuts.txt` file in the script's directory with the following format. The content between the left and right timestamps of every row will be included in the output video
 
 ```
 00:05:10, 00:05:30
