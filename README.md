@@ -2,7 +2,7 @@
 
 Automated pipeline to generate alpha matte masks of a subject and pack them into FISHEYE190 VR video. Uses MatAnyone2 for masking, and finetuned SAM3 for automated person detection and accurate first-frame mask generation
 
-https://github.com/user-attachments/assets/a7d56c29-3daa-4a41-996f-2cd392c2e65f
+<img width="1430" height="360" alt="banner_gif" src="https://github.com/user-attachments/assets/35a51c45-79e1-4901-bdf1-5f0f722e2749" />
 
 ## Structure
 
@@ -98,6 +98,7 @@ Check that you have FFmpeg 8 installed:
 ffmpeg -version
 ```
 
+
 Check that your FFmpeg has the required encoders:
 ```bash
 ffmpeg -encoders | grep nvenc
@@ -113,6 +114,8 @@ ffmpeg -filters | grep opencl
 --- HERE DOCKER INSTRUCTIONS ---
 
 ## Usage
+
+https://github.com/user-attachments/assets/a7d56c29-3daa-4a41-996f-2cd392c2e65f
 
 In order to pack an alpha mask into a video, the video must be in FISHEYE190 format, so if your video is in VR180 format, the first thing you should do is convert it with `fisheye190_converter.py`. Then, create a mask for that FISHEYE190 video with `pipeline.py`. And finally, use `alpha_packer.py` to pack the alpha mask into the edges of the video so that you can view it on VR players like DeoVR. Since masking takes a long time, I included `accurate_cut.py` so you can cut a shorter segment first to use it for testing
 
