@@ -115,7 +115,7 @@ ffmpeg -filters | grep opencl
 
 ## Usage
 
-<video src="https://github.com/user-attachments/assets/a7d56c29-3daa-4a41-996f-2cd392c2e65f" controls="controls" style="max-width: 100%;">
+https://github.com/user-attachments/assets/a7d56c29-3daa-4a41-996f-2cd392c2e65f
 
 In order to pack an alpha mask into a video, the video must be in FISHEYE190 format, so if your video is in VR180 format, the first thing you should do is convert it with `fisheye190_converter.py`. Then, create a mask for that FISHEYE190 video with `pipeline.py`. And finally, use `alpha_packer.py` to pack the alpha mask into the edges of the video so that you can view it on VR players like DeoVR. Since masking takes a long time, I included `accurate_cut.py` so you can cut a shorter segment first to use it for testing
 
