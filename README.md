@@ -154,7 +154,7 @@ python alpha_packer.py mask.mp4 video.mp4
 
 ### fisheye190_converter.py
 
-Convert VR180 video into FISHEYE190. Since it relies on `remap_opencl`, you can use it on Windows and Linux, but you **can't use it on WSL2**. Here's a separate repo for it (link) if you want a standalone Windows install
+Convert VR180 video into FISHEYE190. Since it relies on `remap_opencl`, you can use it on Windows and Linux, but you **can't use it on WSL2**. Here's a separate [repo for it](https://github.com/garrrrido/fisheye-converter) if you want a standalone Windows install
 
 ```bash
 python fisheye190_converter.py video.mp4
