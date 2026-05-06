@@ -4,8 +4,6 @@ Automated pipeline to generate alpha matte masks of a subject and pack them into
 
 <img width="1430" height="360" alt="banner_gif" src="https://github.com/user-attachments/assets/35a51c45-79e1-4901-bdf1-5f0f722e2749" />
 
-## Structure
-
 - `pipeline.py`: Generates a mask for a given video
 - `alpha_packer.py`: Packs alpha masks into FISHEYE190 video
 - `fisheye190_converter.py`: Converts VR180 video to FISHEYE190 for packing the alpha mask
