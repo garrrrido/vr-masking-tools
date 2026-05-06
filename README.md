@@ -121,7 +121,7 @@ In order to pack an alpha mask into a video, the video must be in FISHEYE190 for
 
 ### pipeline.py
 
-Use it to generate a mask of a person from a FISHEYE190 VR video
+Generate a mask of a person from a FISHEYE190 VR video
 
 ```bash
 python pipeline.py video.mp4
@@ -145,7 +145,7 @@ On an RTX 5090 or RTX 6000 Ada, you can expect masking speeds of ~15 fps at 1280
 
 ### alpha_packer.py
 
-Use it to pack your generated alpha mask into your FISHEYE190 video
+Pack your generated alpha mask into your FISHEYE190 video
 
 ```bash
 python alpha_packer.py mask.mp4 video.mp4
@@ -161,7 +161,7 @@ python alpha_packer.py mask.mp4 video.mp4
 
 ### fisheye190_converter.py
 
-Use it to convert VR180 video into FISHEYE190. Since it relies on `remap_opencl`, you can use it on Windows and Linux, but you **can't use it on WSL2**. Here's a separate repo for it (link) if you want a standalone Windows install
+Convert VR180 video into FISHEYE190. Since it relies on `remap_opencl`, you can use it on Windows and Linux, but you **can't use it on WSL2**. Here's a separate repo for it (link) if you want a standalone Windows install
 
 ```bash
 python fisheye190_converter.py video.mp4
@@ -177,7 +177,7 @@ python fisheye190_converter.py video.mp4
 
 ### accurate_cut.py
 
-Use it to cut and concatenate segments from a video. Great for testing the other scripts with shorter scenes
+Cut and concatenate segments from a video. Great for testing the other scripts with shorter scenes
 
 Create a `cuts.txt` file in the script's directory with the following format. The content between the left and right timestamps of every row will be included in the output video
 
@@ -197,6 +197,4 @@ This repository is **multi-licensed**:
 * All original code in this repository is licensed under the [MIT License](LICENSE).
 * The `MatAnyone2/` directory and the downloaded `.pth` pretrained model weights are licensed under the **S-Lab License 1.0**, which restricts use to **non-commercial research purposes only**.
 
-The MatAnyone2 components are **not covered by the MIT License**.
-
-If you intend to use the MatAnyone2 components for commercial purposes, you must obtain permission from the original authors. See `MatAnyone2/LICENSE.txt` for full details.
+The MatAnyone2 components are **not covered by the MIT License**. If you intend to use the MatAnyone2 components for commercial purposes, you must obtain permission from the original authors. See `MatAnyone2/LICENSE.txt` for full details.
