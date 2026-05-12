@@ -7,6 +7,7 @@ import re
 from typing import List, Tuple
 from dataclasses import dataclass
 from utils.ffmpeg_utils import run_ffmpeg_with_progress, is_10bit
+from utils.gpu_backend import is_nvidia, hwaccel_input_args
 
 # detection defaults
 BLACK_THRESHOLD = 0.10      # pixel darkness threshold (0-1)
@@ -36,14 +37,26 @@ def detect_fade_transitions(
     
     Returns: List of (start, end, center) tuples for each black segment
     """
-    # 10-bit (e.g. AV1) needs explicit format conversion on GPU before hwdownload
-    scale_fmt = "scale_cuda=64:32:interp_algo=nearest:format=nv12" if is_10bit(video_path) else "scale_cuda=64:32:interp_algo=nearest"
-    filter_graph = f"{scale_fmt},hwdownload,format=nv12,blackdetect=d={min_black_duration}:pic_th={blackpx_pct}:pix_th={black_threshold}"
-    
+    if is_nvidia():
+        # 10-bit (e.g. AV1) needs explicit format conversion on GPU before hwdownload
+        scale_fmt = (
+            "scale_cuda=64:32:interp_algo=nearest:format=nv12"
+            if is_10bit(video_path) else
+            "scale_cuda=64:32:interp_algo=nearest"
+        )
+        filter_graph = (
+            f"{scale_fmt},hwdownload,format=nv12,"
+            f"blackdetect=d={min_black_duration}:pic_th={blackpx_pct}:pix_th={black_threshold}"
+        )
+    else:
+        filter_graph = (
+            f"scale=64:32:flags=neighbor,"
+            f"blackdetect=d={min_black_duration}:pic_th={blackpx_pct}:pix_th={black_threshold}"
+        )
+
     cmd = [
         'ffmpeg',
-        '-hwaccel', 'cuda',
-        '-hwaccel_output_format', 'cuda',
+        *hwaccel_input_args(),
         '-skip_frame', 'noref',
         '-i', video_path,
         '-vf', filter_graph,

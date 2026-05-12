@@ -20,6 +20,7 @@ import tempfile
 import shutil
 from utils.time_utils import parse_timestamp, format_timestamp
 from utils.ffmpeg_utils import get_video_info, get_output_encoder
+from utils.gpu_backend import hevc_encoder, encoder_args, hwaccel_input_args
 
 
 def parse_cuts_file(cuts_path: str) -> list[tuple[float, float]]:
@@ -45,7 +46,7 @@ def cut_segment_accurate(
     end: float,
     output_path: str,
     fps: float,
-    encoder: str = 'hevc_nvenc',
+    encoder: str | None = None,
 ) -> None:
     """
     Cut a segment with frame-accurate timing and exact fps preservation (uses frame count instead of duration)
@@ -58,6 +59,9 @@ def cut_segment_accurate(
     if frame_count <= 0:
         raise ValueError(f"❌ Non-positive frame_count for cut {start}–{end} at {fps}fps")
 
+    if encoder is None:
+        encoder = hevc_encoder()
+
     # frame-aligned timestamp for the first frame
     aligned_start = start_frame / fps
 
@@ -67,8 +71,7 @@ def cut_segment_accurate(
 
     cmd = [
         'ffmpeg', '-y',
-        '-hwaccel', 'cuda',
-        '-hwaccel_output_format', 'cuda',
+        *hwaccel_input_args(),
 
         # coarse seek
         '-ss', str(keyframe_seek),
@@ -81,12 +84,7 @@ def cut_segment_accurate(
         '-frames:v', str(frame_count),
 
         # keep source fps – no extra -r frame-rate conversion
-        '-c:v', encoder,
-        '-preset', 'p4',
-        '-cq', '24',
-        '-temporal-aq', '1',
-        '-spatial-aq', '1',
-        '-rc-lookahead', '32',
+        '-c:v', encoder, *encoder_args(cq='24'),
 
         '-c:a', 'aac',
         '-b:a', '192k',
