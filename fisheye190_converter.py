@@ -8,6 +8,7 @@ from utils.ffmpeg_utils import (
     get_video_info, run_ffmpeg_with_progress,
     get_output_encoder, SPEED_PRESETS, QUALITY_PRESETS,
 )
+from utils.gpu_backend import is_nvidia, default_preset
 
 
 def save_raw_f32_le(filename: str, data_f32: np.ndarray) -> None:
@@ -103,33 +104,63 @@ def run_ffmpeg_conversion(
     target_w: int,
     target_h: int,
     interp: str = "lanczos",
-    preset: str = "p4",
+    preset: str | None = None,
     cq: str = "24",
-    encoder: str = "hevc_nvenc",
+    encoder: str | None = None,
+    ocl_device: str | None = None,
 ) -> None:
+    if preset is None:
+        preset = default_preset()
+    if encoder is None:
+        encoder = get_output_encoder(input_video)
+
+    ocl_spec = f"opencl=ocl:{ocl_device}" if ocl_device else "opencl=ocl"
+
     print(f"Starting FISHEYE190 conversion...")
     print(f"Encoder: {encoder}")
+    if ocl_device:
+        print(f"OpenCL device: {ocl_device}")
 
-    filter_complex = (
-        f"[0:v]format=yuv444p,hwupload[v_big];"
-        f"[1:v]format=grayf32le,hwupload[xm];"
-        f"[2:v]format=grayf32le,hwupload[ym];"
-        f"[v_big][xm][ym]remap_opencl=fill=black[out_big];"
-        f"[out_big]hwdownload,format=yuv444p,hwupload_cuda,"
-        f"scale_cuda={target_w}:{target_h}:interp_algo={interp}:format=nv12[out]"
-    )
-
-    cmd = [
+    cmd: list[str] = [
         "ffmpeg", "-y",
         "-hide_banner",
         "-stats",
         "-nostdin",
+    ]
 
-        "-init_hw_device", "opencl=ocl",
-        "-init_hw_device", "cuda=cud",
-        "-filter_hw_device", "ocl",
+    if is_nvidia():
+        # remap on OpenCL, then upload to CUDA for hardware-scaled output to NVENC.
+        filter_complex = (
+            f"[0:v]format=yuv444p,hwupload[v_big];"
+            f"[1:v]format=grayf32le,hwupload[xm];"
+            f"[2:v]format=grayf32le,hwupload[ym];"
+            f"[v_big][xm][ym]remap_opencl=fill=black[out_big];"
+            f"[out_big]hwdownload,format=yuv444p,hwupload_cuda,"
+            f"scale_cuda={target_w}:{target_h}:interp_algo={interp}:format=nv12[out]"
+        )
+        cmd += [
+            "-init_hw_device", ocl_spec,
+            "-init_hw_device", "cuda=cud",
+            "-filter_hw_device", "ocl",
 
-        "-hwaccel", "cuda",
+            "-hwaccel", "cuda",
+        ]
+    else:
+        # remap on OpenCL, scale on CPU before feeding AMF.
+        filter_complex = (
+            f"[0:v]format=yuv444p,hwupload[v_big];"
+            f"[1:v]format=grayf32le,hwupload[xm];"
+            f"[2:v]format=grayf32le,hwupload[ym];"
+            f"[v_big][xm][ym]remap_opencl=fill=black[out_big];"
+            f"[out_big]hwdownload,format=yuv444p,"
+            f"scale={target_w}:{target_h}:flags={interp},format=nv12[out]"
+        )
+        cmd += [
+            "-init_hw_device", ocl_spec,
+            "-filter_hw_device", "ocl",
+        ]
+
+    cmd += [
         "-i", input_video,
 
         # x map: one raw frame
@@ -151,15 +182,26 @@ def run_ffmpeg_conversion(
         "-map", "0:a?", "-c:a", "copy",
 
         "-c:v", encoder,
-        "-preset", preset,
-        "-cq", cq,
-        "-b:v", "0",
-        "-temporal-aq", "1",
-        "-spatial-aq", "1",
-        "-rc-lookahead", "32",
-
-        output_video
     ]
+
+    if is_nvidia():
+        cmd += [
+            "-preset", preset,
+            "-cq", cq,
+            "-b:v", "0",
+            "-temporal-aq", "1",
+            "-spatial-aq", "1",
+            "-rc-lookahead", "32",
+        ]
+    else:
+        # AMF: -quality is a named preset; qvbr_quality_level is 0-51 (lower = better)
+        cmd += [
+            "-quality", preset,
+            "-rc", "qvbr",
+            "-qvbr_quality_level", cq,
+        ]
+
+    cmd += [output_video]
 
     rc, _ = run_ffmpeg_with_progress(cmd)
 
@@ -188,8 +230,19 @@ def main() -> None:
         default="normal",
         help="Encoding speed (slower = better quality) (default: normal)",
     )
+    parser.add_argument(
+        "--ocl-device",
+        default=os.environ.get("OCL_DEVICE"),
+        metavar="P.D",
+        help=(
+            "OpenCL device for remap_opencl in '<platform>.<device>' form (e.g. '0.0'). "
+            "Defaults to the first device ffmpeg finds. Can also be set via the "
+            "OCL_DEVICE environment variable. Run 'ffmpeg -hide_banner -v verbose "
+            "-init_hw_device opencl -f lavfi -i nullsrc -f null -' to list available devices."
+        ),
+    )
     args = parser.parse_args()
-    
+
     preset = SPEED_PRESETS[args.speed]
     cq = QUALITY_PRESETS[args.quality]
 
@@ -217,7 +270,8 @@ def main() -> None:
             interp=args.interp,
             preset=preset,
             cq=cq,
-            encoder=encoder
+            encoder=encoder,
+            ocl_device=args.ocl_device,
         )
 
         print("✅ Conversion finished")

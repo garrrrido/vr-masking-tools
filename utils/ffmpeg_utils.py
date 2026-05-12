@@ -5,10 +5,34 @@ import shutil
 import math
 from typing import Tuple
 
+from utils.gpu_backend import (
+    is_nvidia, hevc_encoder, av1_encoder,
+    encoder_args, hwaccel_input_args, speed_presets,
+)
 
-# NVENC preset/quality mappings
-SPEED_PRESETS = {'slow': 'p6', 'normal': 'p4', 'fast': 'p2'}
+
+# Quality preset mapping (backend-agnostic)
 QUALITY_PRESETS = {'ultra': '18', 'high': '24', 'normal': '26', 'low': '28'}
+
+
+def SPEED_PRESETS_get() -> dict[str, str]:
+    return speed_presets()
+
+
+# Backwards-compatible name: resolved lazily at attribute access.
+# Some callers do `from ffmpeg_utils import SPEED_PRESETS`.
+class _SpeedPresetsProxy(dict):
+    def __getitem__(self, key):
+        return speed_presets()[key]
+    def keys(self):
+        return speed_presets().keys()
+    def __iter__(self):
+        return iter(speed_presets())
+    def __contains__(self, key):
+        return key in speed_presets()
+
+
+SPEED_PRESETS = _SpeedPresetsProxy()
 
 
 def parse_ffmpeg_progress(line: str) -> str:
@@ -55,18 +79,18 @@ def get_video_info(video_path: str) -> Tuple[int, int, float, float]:
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"❌ ffprobe failed: {result.stderr}")
-    
+
     lines = result.stdout.strip().split('\n')
     w, h, fps_str = lines[0].split(',')
     duration = float(lines[1]) if len(lines) > 1 else 0
-    
+
     # parse fps fraction (60/1)
     if '/' in fps_str:
         num, den = fps_str.split('/')
         fps = float(num) / float(den)
     else:
         fps = float(fps_str)
-    
+
     return int(w), int(h), fps, duration
 
 
@@ -111,7 +135,7 @@ def supports_av1_encode() -> bool:
     cmd = [
         'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=0.04:r=25',
-        '-c:v', 'av1_nvenc', '-frames:v', '1',
+        '-c:v', av1_encoder(), '-frames:v', '1',
         '-f', 'null', '-'
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -120,10 +144,10 @@ def supports_av1_encode() -> bool:
 
 
 def get_output_encoder(video_path: str) -> str:
-    """Return 'av1_nvenc' if input is AV1 and GPU supports it, otherwise 'hevc_nvenc'"""
+    """Return the AV1 encoder if input is AV1 and GPU supports it, otherwise HEVC."""
     if get_video_codec(video_path) == 'av1' and supports_av1_encode():
-        return 'av1_nvenc'
-    return 'hevc_nvenc'
+        return av1_encoder()
+    return hevc_encoder()
 
 
 def concatenate_videos(video_list: list[str], output_path: str) -> str:
@@ -152,28 +176,28 @@ def concatenate_videos(video_list: list[str], output_path: str) -> str:
                         os.remove(tb)
                     except OSError:
                         pass
-    
+
     # find common directory for relative paths
     abs_videos = [os.path.abspath(v) for v in video_list]
     abs_output = os.path.abspath(output_path)
     common_dir = os.path.commonpath(abs_videos)
     if not os.path.isdir(common_dir):
         common_dir = os.path.dirname(common_dir)
-    
+
     # verify files and build relative inputs
     rel_videos = []
     for video in abs_videos:
         if not os.path.exists(video):
             raise RuntimeError(f"❌ File missing: {video}")
         rel_videos.append(os.path.relpath(video, common_dir))
-    
+
     rel_output = os.path.relpath(abs_output, common_dir)
-    
+
     # build inputs
     inputs = []
     for rel in rel_videos:
         inputs.extend(['-i', rel])
-    
+
     # build filter_complex
     n = len(video_list)
     filter_parts = []
@@ -182,7 +206,7 @@ def concatenate_videos(video_list: list[str], output_path: str) -> str:
     concat_inputs = "".join(f"[v{i}]" for i in range(n))
     filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[outv]")
     filter_complex = ";".join(filter_parts)
-    
+
     # write filter_complex to temp file to avoid cmd length limits
     filter_file = os.path.join(common_dir, "_concat_filter.txt")
     with open(filter_file, 'w') as f:
@@ -194,21 +218,21 @@ def concatenate_videos(video_list: list[str], output_path: str) -> str:
             *inputs,
             '-/filter_complex', '_concat_filter.txt',
             '-map', '[outv]',
-            '-c:v', 'hevc_nvenc', '-preset', 'p4', '-cq', '18',
+            '-c:v', hevc_encoder(), *encoder_args(cq='18', extras=False),
             rel_output
         ]
-        
+
         rc, _ = run_ffmpeg_with_progress(cmd, cwd=common_dir)
-        
+
         if rc != 0:
             raise RuntimeError(f"❌ FFmpeg concatenation failed")
-        
+
         if not os.path.exists(abs_output):
             raise RuntimeError(f"❌ Concat output not created: {output_path}")
     finally:
         if os.path.exists(filter_file):
             os.remove(filter_file)
-    
+
     return output_path
 
 
@@ -219,7 +243,7 @@ def sync_mask_to_video(mask_path: str, fps: float, frame_offset: int = 0) -> str
     - 0 frame_offset: forces CFR at the target fps
     - positive frame_offset: trim frames from the start (mask catches up / plays earlier)
     - negative frame_offset: pad black frames at the start (mask delayed / plays later)
-    
+
     Creates a _synced file next to the original and returns path to the synced file
     """
     frame_duration = abs(frame_offset) / fps
@@ -241,9 +265,7 @@ def sync_mask_to_video(mask_path: str, fps: float, frame_offset: int = 0) -> str
         '-i', mask_path,
         '-r', f"{fps}", '-vsync', 'cfr',
         '-vf', vf,
-        '-c:v', 'hevc_nvenc',
-        '-preset', 'p4',
-        '-cq', '18',
+        '-c:v', hevc_encoder(), *encoder_args(cq='18', extras=False),
         synced_path,
     ]
 
@@ -269,18 +291,21 @@ def extract_left_eye_frames(
     output_paths = []
     eye_size = orig_height
     crop_filter = f"crop={eye_size}:{eye_size}:0:0"
-    
-    # 10-bit (e.g. AV1) needs GPU format conversion before hwdownload
-    if is_10bit(video_path):
-        dl_filter = f"scale_cuda=format=nv12,hwdownload,format=nv12,{crop_filter}"
+
+    if is_nvidia():
+        # 10-bit (e.g. AV1) needs GPU format conversion before hwdownload
+        if is_10bit(video_path):
+            dl_filter = f"scale_cuda=format=nv12,hwdownload,format=nv12,{crop_filter}"
+        else:
+            dl_filter = f"hwdownload,format=nv12,{crop_filter}"
     else:
-        dl_filter = f"hwdownload,format=nv12,{crop_filter}"
+        dl_filter = crop_filter
 
     for ts in timestamps:
         out_path = os.path.join(output_dir, f"frame_{ts:.0f}s.png")
         cmd = [
             'ffmpeg', '-y', '-hide_banner',
-            '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda',
+            *hwaccel_input_args(),
             '-ss', str(ts),
             '-i', video_path,
             '-vf', dl_filter,
@@ -291,7 +316,7 @@ def extract_left_eye_frames(
         process.wait()
         if process.returncode == 0 and os.path.exists(out_path):
             output_paths.append(out_path)
-    
+
     return output_paths
 
 
@@ -351,50 +376,67 @@ def extract_segment_with_frames(
         video_left_crop = f"crop={target_eye}:{target_eye}:0:0"
         video_right_crop = f"crop={target_eye}:{target_eye}:{target_eye}:0"
 
-    # scale stereo -> target size on GPU -> crop L/R on CPU -> upload for NVENC
     scale_w = target_height * 2
     scale_h = target_height
 
-    # 10-bit needs GPU format conversion before hwdownload
-    _10bit = is_10bit(stereo_video)
-    full_dl = "scale_cuda=format=nv12,hwdownload,format=nv12" if _10bit else "hwdownload,format=nv12"
-    scale_fmt = f"scale_cuda={scale_w}:{scale_h}:interp_algo=bicubic:format=nv12" if _10bit else f"scale_cuda={scale_w}:{scale_h}:interp_algo=bicubic"
+    if is_nvidia():
+        # scale stereo -> target size on GPU -> crop L/R on CPU -> upload for NVENC
+        # 10-bit needs GPU format conversion before hwdownload
+        _10bit = is_10bit(stereo_video)
+        full_dl = "scale_cuda=format=nv12,hwdownload,format=nv12" if _10bit else "hwdownload,format=nv12"
+        scale_fmt = (
+            f"scale_cuda={scale_w}:{scale_h}:interp_algo=bicubic:format=nv12"
+            if _10bit else
+            f"scale_cuda={scale_w}:{scale_h}:interp_algo=bicubic"
+        )
 
-    filter_complex = (
-        # trim accurately (fine_seek) and reset timestamps, then branch
-        f"[0:v]trim=start={fine_seek}:duration={seg_dur},setpts=PTS-STARTPTS,split=2[full][toscale];"
+        filter_complex = (
+            f"[0:v]trim=start={fine_seek}:duration={seg_dur},setpts=PTS-STARTPTS,split=2[full][toscale];"
 
-        # full resolution .png frames (cpu path)
-        f"[full]{full_dl},split=2[fullL][fullR];"
-        f"[fullL]select=eq(n\\,0),{frame_left_crop}[frame_left];"
-        f"[fullR]select=eq(n\\,0),{frame_right_crop}[frame_right];"
+            # full resolution .png frames (cpu path)
+            f"[full]{full_dl},split=2[fullL][fullR];"
+            f"[fullL]select=eq(n\\,0),{frame_left_crop}[frame_left];"
+            f"[fullR]select=eq(n\\,0),{frame_right_crop}[frame_right];"
 
-        # segment videos (resize on gpu, then crops on cpu at target size)
-        f"[toscale]{scale_fmt},"
-        f"hwdownload,format=nv12[scaled_cpu];"
-        f"[scaled_cpu]split=2[sL][sR];"
-        f"[sL]{video_left_crop},hwupload_cuda[video_left];"
-        f"[sR]{video_right_crop},hwupload_cuda[video_right]"
-    )
+            # segment videos (resize on gpu, then crops on cpu at target size)
+            f"[toscale]{scale_fmt},"
+            f"hwdownload,format=nv12[scaled_cpu];"
+            f"[scaled_cpu]split=2[sL][sR];"
+            f"[sL]{video_left_crop},hwupload_cuda[video_left];"
+            f"[sR]{video_right_crop},hwupload_cuda[video_right]"
+        )
+    else:
+        # All CPU filtering
+        scale_fmt = f"scale={scale_w}:{scale_h}:flags=bicubic"
+        filter_complex = (
+            f"[0:v]trim=start={fine_seek}:duration={seg_dur},setpts=PTS-STARTPTS,split=2[full][toscale];"
+
+            f"[full]split=2[fullL][fullR];"
+            f"[fullL]select=eq(n\\,0),{frame_left_crop}[frame_left];"
+            f"[fullR]select=eq(n\\,0),{frame_right_crop}[frame_right];"
+
+            f"[toscale]{scale_fmt},split=2[sL][sR];"
+            f"[sL]{video_left_crop}[video_left];"
+            f"[sR]{video_right_crop}[video_right]"
+        )
 
     cmd = [
         "ffmpeg", "-y",
         "-hide_banner",
     ]
 
-    is_av1 = get_video_codec(stereo_video) == 'av1'
-    
-    cmd.extend([
+    if is_nvidia():
+        is_av1 = get_video_codec(stereo_video) == 'av1'
         # decode and scaling on gpu. limit threads and omit extra_hw_frames for AV1 to avoid NVDEC surface crash
-        "-threads", "1" if is_av1 else "2",
-        "-hwaccel", "cuda",
-        "-hwaccel_output_format", "cuda",
-    ])
-    if not is_av1:
-        cmd.extend(["-extra_hw_frames", "16"])
+        cmd.extend([
+            "-threads", "1" if is_av1 else "2",
+            "-hwaccel", "cuda",
+            "-hwaccel_output_format", "cuda",
+        ])
+        if not is_av1:
+            cmd.extend(["-extra_hw_frames", "16"])
 
     cmd.extend([
-
         # fast seek to near-aligned_start
         "-ss", str(keyframe_seek),
         "-i", stereo_video,
@@ -407,9 +449,9 @@ def extract_segment_with_frames(
 
         # output 3/4: mp4 segments
         "-map", "[video_left]", "-frames:v", str(frames),
-        "-c:v", "hevc_nvenc", "-preset", "p4", "-cq", "18", left_video_out,
+        "-c:v", hevc_encoder(), *encoder_args(cq='18', extras=False), left_video_out,
         "-map", "[video_right]", "-frames:v", str(frames),
-        "-c:v", "hevc_nvenc", "-preset", "p4", "-cq", "18", right_video_out,
+        "-c:v", hevc_encoder(), *encoder_args(cq='18', extras=False), right_video_out,
     ])
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -436,14 +478,14 @@ def stitch_stereo_videos(
 ) -> str:
     """
     Combine two square videos side-by-side into a stereo video preserving input fps
-    
+
     Args:
         left_video: left eye video path
         right_video: right eye video path
         output_path: output stereo video path
         center_cropped: if True, pad the center-cropped masks to full_size before stitching
         full_size: target size per eye (required if center_cropped=True)
-    
+
     Returns:
         output_path
     """
@@ -457,23 +499,21 @@ def stitch_stereo_videos(
     else:
         # standard stack without padding
         filter_complex = "[0:v][1:v]hstack=inputs=2[out]"
-    
+
     cmd = [
         'ffmpeg', '-y',
         '-i', left_video,
         '-i', right_video,
         '-filter_complex', filter_complex,
         '-map', '[out]',
-        '-c:v', 'hevc_nvenc',
-        '-preset', 'p4',
-        '-cq', '18',
+        '-c:v', hevc_encoder(), *encoder_args(cq='18', extras=False),
         output_path
     ]
-    
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"❌ Stereo stitching failed: {result.stderr}")
-    
+
     return output_path
 
 
@@ -490,16 +530,14 @@ def generate_solid_mask(
     start_frame = math.floor(start_time * fps)
     end_frame = math.floor(end_time * fps)
     frames = end_frame - start_frame
-    
+
     cmd = [
         'ffmpeg', '-y',
         '-f', 'lavfi',
         '-i', f'color=c={color}:s={width}x{height}:r={fps}',
         '-vf', 'format=gray',
         '-frames:v', str(frames),
-        '-c:v', 'hevc_nvenc',
-        '-preset', 'p4',
-        '-cq', '18',
+        '-c:v', hevc_encoder(), *encoder_args(cq='18', extras=False),
         output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -517,18 +555,18 @@ def apply_fade_overlay(
 ) -> str:
     """
     Apply fade overlay to a video segment
-    
+
     fadeout: at the end of the video, multiply pixel values towards black
     fadein: at the start of the video, fade from black or white to full
-    
+
     Args:
         fade_in_white: if True, fade in from white (after intro). if False, fade from black
     """
-    
+
     if fade_in == 0 and fade_out == 0:
         shutil.copy(input_path, output_path)
         return output_path
-    
+
     # get video duration
     probe_cmd = [
         'ffprobe', '-v', 'error',
@@ -540,7 +578,7 @@ def apply_fade_overlay(
     if result.returncode != 0:
         raise RuntimeError(f"❌ ffprobe failed: {result.stderr}")
     duration = float(result.stdout.strip())
-    
+
     # build fade filter
     filters = []
     if fade_in > 0:
@@ -549,20 +587,18 @@ def apply_fade_overlay(
     if fade_out > 0:
         fade_start = duration - fade_out
         filters.append(f"fade=t=out:st={fade_start}:d={fade_out}")
-    
+
     filter_str = ",".join(filters) if filters else "null"
-    
+
     cmd = [
         'ffmpeg', '-y',
         '-i', input_path,
         '-vf', filter_str,
-        '-c:v', 'hevc_nvenc',
-        '-preset', 'p4',
-        '-cq', '18',
+        '-c:v', hevc_encoder(), *encoder_args(cq='18', extras=False),
         output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"❌ Fade overlay failed: {result.stderr}")
-        
+
     return output_path

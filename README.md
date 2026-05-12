@@ -11,7 +11,7 @@ You can run all scripts on Linux and WSL2, except for `fisheye190_converter.py`,
 
 ### Prerequisites
 
-- 16GB of RAM and an NVIDIA GPU with at least 8GB of VRAM
+- 16GB of RAM and a GPU with at least 8GB of VRAM (NVIDIA recommended; AMD Radeon is also supported via ROCm on Windows — see [AMD ROCm setup](#amd-rocm-setup-windows))
 
 - Have the newest NVIDIA drivers installed and CUDA Toolkit 13.1
 
@@ -75,6 +75,42 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### AMD ROCm setup (Windows)
+
+The scripts also run on AMD Radeon GPUs on Windows via ROCm + the AMF FFmpeg encoder. The GPU backend is selected at runtime:
+
+1. **Auto-detect (default)**: the first `ffmpeg` encoder probe wins. `hevc_nvenc` → NVIDIA path; otherwise `hevc_amf` → AMD path.
+2. **Force a backend**: set the `GPU_BACKEND` environment variable to `nvidia` or `amd` before running any script.
+
+**Prerequisites for the AMD path:**
+
+- Python 3.12 (required by the ROCm wheels)
+- AMD Adrenalin / Radeon driver 26.2.2 or newer
+- FFmpeg built with AMF support (`hevc_amf`, `av1_amf`)
+
+**Installation** (see the [AMD docs](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/windows/install-pytorch.html) for details):
+
+Install the ROCm SDK first (provides the runtime PyTorch links against), then the Python dependencies:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+pip install --no-cache-dir `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz
+
+pip install -r requirements-rocm.txt
+```
+
+To force the AMD path at runtime (skip auto-detection):
+
+```powershell
+$env:GPU_BACKEND = "amd"
+```
+
 ## Usage
 
 https://github.com/user-attachments/assets/a7d56c29-3daa-4a41-996f-2cd392c2e65f
@@ -118,9 +154,9 @@ python alpha_packer.py mask.mp4 video.mp4
 
 **Flags:**
 
-- `--quality` : (default: high) FFmpeg cq settings for video encoding. Higher = better quality, larger file size. `ultra=18`, `high=24`, `normal=26`, `low=28`
+- `--quality` : (default: high) FFmpeg cq/qp settings for video encoding. Higher = better quality, larger file size. `ultra=18`, `high=24`, `normal=26`, `low=28`
 
-- `--speed` : (default: normal) FFmpeg preset settings for video encoding. Slower = slower encoding, better quality. `slow=p6`, `normal=p4`, `fast=p2`
+- `--speed` : (default: normal) FFmpeg preset for video encoding. Slower = slower encoding, better quality. NVENC: `slow=p6`, `normal=p4`, `fast=p2`. AMF: `slow=quality`, `normal=balanced`, `fast=speed`
 
 - `--sync` : (default: disabled) Sync shifts the mask by N frames before packing. Only change it if the resulting mask isn't perfectly synced with the video. Positive = mask catches up (plays earlier), negative = mask delayed (plays later)
 
@@ -134,11 +170,16 @@ python fisheye190_converter.py video.mp4
 
 **Flags:**
 
-- `--quality` : (default: high) FFmpeg cq settings for video encoding. Higher = better quality, larger file size. `ultra=18`, `high=24`, `normal=26`, `low=28`
+- `--quality` : (default: high) FFmpeg cq/qp settings for video encoding. Higher = better quality, larger file size. `ultra=18`, `high=24`, `normal=26`, `low=28`
 
-- `--speed` : (default: normal) FFmpeg preset settings for video encoding. Slower = slower encoding, better quality. `slow=p6`, `normal=p4`, `fast=p2`
+- `--speed` : (default: normal) FFmpeg preset for video encoding. Slower = slower encoding, better quality. NVENC: `slow=p6`, `normal=p4`, `fast=p2`. AMF: `slow=quality`, `normal=balanced`, `fast=speed`
 
 - `--interp` : (default: lanczos) Interpolation algorithm. Lanczos is the highest quality. You can use bilinear or bicubic too, but the speeds don't change much
+
+- `--ocl-device` : (default: first OpenCL device ffmpeg finds) OpenCL device used by `remap_opencl`, in `<platform>.<device>` form (e.g. `0.0`, `1.0`). Useful if your machine has multiple OpenCL devices (e.g. a CPU runtime listed before the GPU, or an integrated GPU alongside a discrete one) and ffmpeg picks the wrong one. You can also set the `OCL_DEVICE` environment variable instead. To list available devices:
+  ```bash
+  ffmpeg -hide_banner -v verbose -init_hw_device opencl -f lavfi -i nullsrc -f null -
+  ```
 
 ### accurate_cut.py
 
@@ -175,8 +216,13 @@ ffmpeg -version
 
 Check that your FFmpeg has the required encoders:
 ```bash
+# NVIDIA backend
 ffmpeg -encoders | grep nvenc
+# AMD backend
+ffmpeg -encoders | grep amf
 ```
+
+If both encoders are available and you want to force one, set the `GPU_BACKEND` environment variable to `nvidia` or `amd` before running a script.
 
 Check that your FFmpeg has OpenCL support (only needed for VR180 to FISHEYE190 conversion):
 ```bash

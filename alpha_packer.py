@@ -17,6 +17,7 @@ from utils.ffmpeg_utils import (
     get_video_info, run_ffmpeg_with_progress, sync_mask_to_video,
     get_output_encoder, SPEED_PRESETS, QUALITY_PRESETS,
 )
+from utils.gpu_backend import is_nvidia, encoder_args, default_preset
 
 
 def _ceil_to(n: int, base: int) -> int:
@@ -58,59 +59,10 @@ def get_circle_mask(size: int) -> str:
     return str(mask_path)
 
 
-def create_alpha_pack_command(
-    video_path: str,
-    mask_path: str,
-    output_path: str,
-    video_dims: tuple[int, int],
-    preset: str = 'p4',
-    cq: str = '24',
-    encoder: str = 'hevc_nvenc',
-) -> list[str]:
-    """
-    Generate FFmpeg command to pack alpha mask into fisheye video
-    - Main video decoded on gpu, all overlays done on gpu with overlay_cuda
-    - Mask processing stays on cpu
-    """
-
-    video_w, video_h = video_dims
-
-    # align output canvas to avoid NVENC padded coded size artifacts
-    out_h = _ceil_to(video_h, 32)
-
-    # keep 2:1 if input is 2:1, otherwise fall back to aligning width too
-    if video_w == 2 * video_h:
-        out_w = 2 * out_h
-    else:
-        out_w = _ceil_to(video_w, 32)
-
-    if (out_w, out_h) != (video_w, video_h):
-        print(f"NVENC-aligned output: {out_w}x{out_h}")
-
-    # calculate overlay dimensions (40% of height for fisheye corners)
-    overlay_size = int(out_h * 0.4)
-    overlay_size = (overlay_size // 4) * 4
-    half_overlay = overlay_size // 2
-
-    # resolution-dependent parameters (smaller videos use softer processing)
-    if video_h <= 2400:
-        erosion_threshold = 32768
-        contrast = 2.0
-        gamma = 1.2
-    else:
-        erosion_threshold = 65535
-        contrast = 2.5
-        gamma = 1.4
-
-    sigma = 1.8
-
-    erosion_filter = f"erosion=threshold0={erosion_threshold}:coordinates=255,"
-
-    print(f"Mask Gen Params: gblur={sigma:.1f}, erosion={erosion_threshold}, contrast={contrast}, gamma={gamma}")
-
-    circle_mask = get_circle_mask(overlay_size)
-
-    filter_parts: list[str] = [
+def _build_filter_complex_nvidia(out_w: int, out_h: int, overlay_size: int, half_overlay: int,
+                                  sigma: float, erosion_filter: str, contrast: float, gamma: float) -> str:
+    """NVENC/CUDA path: GPU decode, CUDA filters, overlay_cuda."""
+    parts: list[str] = [
         # force main to aligned output size on gpu
         f"[0:v]scale_cuda=w={out_w}:h={out_h}:format=yuv420p[vid_gpu]",
 
@@ -168,8 +120,138 @@ def create_alpha_pack_command(
         "[v4][right_bl_gpu]overlay_cuda=x=main_w-overlay_w:y=0[v5]",
         "[v5][right_br_gpu]overlay_cuda=x=0:y=0[out]",
     ]
+    return ";".join(parts)
 
-    filter_complex = ";".join(filter_parts)
+
+def _build_filter_complex_cpu(out_w: int, out_h: int, overlay_size: int, half_overlay: int,
+                               sigma: float, erosion_filter: str, contrast: float, gamma: float) -> str:
+    """CPU path (used with AMF encoder): software decode, CPU filters, alpha-aware CPU overlay."""
+    parts: list[str] = [
+        # force main to aligned output size. CPU overlay is used because these
+        # packed tiles rely on their alpha channel to avoid covering fisheye pixels.
+        f"[0:v]scale={out_w}:{out_h}:flags=bicubic,format=yuv420p[vid]",
+
+        # split stereo mask into left/right eyes
+        "[1:v]split=2[mask1][mask2]",
+
+        # circle mask split for left/right eye (single frame; the -loop input is bounded by -t)
+        "[2:v]format=gray,split=2[circle_l][circle_r]",
+
+        # left eye
+        (
+            f"[mask1]crop=ih:ih:0:0,"
+            f"scale={overlay_size}:{overlay_size}:flags=bicubic,"
+            f"{erosion_filter}"
+            f"gblur=sigma={sigma},eq=contrast={contrast}:gamma={gamma},"
+            "format=gbrp[left_scaled]"
+        ),
+        "[left_scaled][circle_l]alphamerge,format=rgba[left_circle]",
+
+        # right eye
+        (
+            f"[mask2]crop=ih:ih:iw-ih:0,"
+            f"scale={overlay_size}:{overlay_size}:flags=bicubic,"
+            f"{erosion_filter}"
+            f"gblur=sigma={sigma},eq=contrast={contrast}:gamma={gamma},"
+            "format=gbrp[right_scaled]"
+        ),
+        "[right_scaled][circle_r]alphamerge,format=rgba[right_circle]",
+
+        # split left circle into top/bottom semicircles (CPU crop)
+        "[left_circle]split=2[left_for_top][left_for_bottom]",
+        f"[left_for_top]crop={overlay_size}:{half_overlay}:0:0[left_top]",
+        f"[left_for_bottom]crop={overlay_size}:{half_overlay}:0:{half_overlay}[left_bottom]",
+
+        # split right circle into 4 quadrants (CPU crop)
+        "[right_circle]split=4[r1][r2][r3][r4]",
+        f"[r1]crop={half_overlay}:{half_overlay}:0:0[right_tl]",
+        f"[r2]crop={half_overlay}:{half_overlay}:{half_overlay}:0[right_tr]",
+        f"[r3]crop={half_overlay}:{half_overlay}:0:{half_overlay}[right_bl]",
+        f"[r4]crop={half_overlay}:{half_overlay}:{half_overlay}:{half_overlay}[right_br]",
+
+        # Alpha-aware CPU overlays. The swapped destinations are intentional:
+        # alpha fragments are packed into the black area opposite their source edge.
+        f"[vid][left_top]overlay=x={(out_w - overlay_size) // 2}:y={out_h - half_overlay}:format=auto[v1]",
+        f"[v1][left_bottom]overlay=x={(out_w - overlay_size) // 2}:y=0:format=auto[v2]",
+        f"[v2][right_tl]overlay=x={out_w - half_overlay}:y={out_h - half_overlay}:format=auto[v3]",
+        f"[v3][right_tr]overlay=x=0:y={out_h - half_overlay}:format=auto[v4]",
+        f"[v4][right_bl]overlay=x={out_w - half_overlay}:y=0:format=auto[v5]",
+        "[v5][right_br]overlay=x=0:y=0:format=auto,format=yuv420p[out]",
+    ]
+    return ";".join(parts)
+
+
+def create_alpha_pack_command(
+    video_path: str,
+    mask_path: str,
+    output_path: str,
+    video_dims: tuple[int, int],
+    preset: str | None = None,
+    cq: str = '24',
+    encoder: str | None = None,
+    duration: float | None = None,
+    fps: float | None = None,
+) -> list[str]:
+    """
+    Generate FFmpeg command to pack alpha mask into fisheye video.
+
+    NVIDIA backend: GPU decode (NVDEC) and overlay_cuda for all overlays. Mask
+    pre-processing stays on CPU then is uploaded to CUDA frames.
+
+    AMD backend: CPU decode + CPU overlays (overlay_opencl does not blend the
+    RGBA alpha edges correctly here and can turn transparent regions into
+    visible green/gray blocks), AMF encoder for output.
+    """
+    if encoder is None:
+        encoder = get_output_encoder(video_path)
+    if preset is None:
+        preset = default_preset()
+
+    video_w, video_h = video_dims
+
+    # align output canvas to avoid encoder padded coded size artifacts
+    out_h = _ceil_to(video_h, 32)
+
+    # keep 2:1 if input is 2:1, otherwise fall back to aligning width too
+    if video_w == 2 * video_h:
+        out_w = 2 * out_h
+    else:
+        out_w = _ceil_to(video_w, 32)
+
+    if (out_w, out_h) != (video_w, video_h):
+        print(f"Encoder-aligned output: {out_w}x{out_h}")
+
+    # calculate overlay dimensions (40% of height for fisheye corners)
+    overlay_size = int(out_h * 0.4)
+    overlay_size = (overlay_size // 4) * 4
+    half_overlay = overlay_size // 2
+
+    # resolution-dependent parameters (smaller videos use softer processing)
+    if video_h <= 2400:
+        erosion_threshold = 32768
+        contrast = 2.0
+        gamma = 1.2
+    else:
+        erosion_threshold = 65535
+        contrast = 2.5
+        gamma = 1.4
+
+    sigma = 1.8
+
+    erosion_filter = f"erosion=threshold0={erosion_threshold}:coordinates=255,"
+
+    print(f"Mask Gen Params: gblur={sigma:.1f}, erosion={erosion_threshold}, contrast={contrast}, gamma={gamma}")
+
+    circle_mask = get_circle_mask(overlay_size)
+
+    if is_nvidia():
+        filter_complex = _build_filter_complex_nvidia(
+            out_w, out_h, overlay_size, half_overlay, sigma, erosion_filter, contrast, gamma,
+        )
+    else:
+        filter_complex = _build_filter_complex_cpu(
+            out_w, out_h, overlay_size, half_overlay, sigma, erosion_filter, contrast, gamma,
+        )
 
     cmd: list[str] = [
         "ffmpeg", "-y",
@@ -177,23 +259,42 @@ def create_alpha_pack_command(
         # threading
         "-filter_threads", "0",
         "-threads", "0",
+    ]
 
-        # CUDA device for filters + encoder
-        "-init_hw_device", "cuda=cuda",
-        "-filter_hw_device", "cuda",
+    if is_nvidia():
+        cmd += [
+            # CUDA device for filters + encoder
+            "-init_hw_device", "cuda=cuda",
+            "-filter_hw_device", "cuda",
 
-        # main video: NVDEC to CUDA frames
-        "-hwaccel", "cuda",
-        "-hwaccel_output_format", "cuda",
-        "-i", video_path,
+            # main video: NVDEC to CUDA frames
+            "-hwaccel", "cuda",
+            "-hwaccel_output_format", "cuda",
+            "-i", video_path,
 
-        # mask input (cpu)
-        "-i", mask_path,
+            # mask input (cpu)
+            "-i", mask_path,
 
-        # circle mask (looped)
-        "-loop", "1",
-        "-i", circle_mask,
+            # circle mask (looped)
+            "-loop", "1",
+            "-i", circle_mask,
+        ]
+    else:
+        cmd += [
+            # main video
+            "-i", video_path,
 
+            # mask input
+            "-i", mask_path,
+
+            # circle mask (looped; bounded by -t to match main video duration)
+            "-loop", "1",
+            *(["-framerate", f"{fps}"] if fps else []),
+            *(["-t", f"{duration}"] if duration else []),
+            "-i", circle_mask,
+        ]
+
+    cmd += [
         "-filter_complex", filter_complex,
         "-map", "[out]",
         "-map", "0:a?",
@@ -202,12 +303,7 @@ def create_alpha_pack_command(
         "-shortest",
 
         # video encoding
-        "-c:v", encoder,
-        "-preset", preset,
-        "-cq", cq,
-        "-temporal-aq", "1",
-        "-spatial-aq", "1",
-        "-rc-lookahead", "32",
+        "-c:v", encoder, *encoder_args(preset=preset, cq=cq),
 
         # audio passthrough
         "-c:a", "copy",
@@ -223,7 +319,7 @@ def pack_video(
     mask_path: str,
     output_path: str | None = None,
     sync_frames: int = None,
-    preset: str = 'p4',
+    preset: str | None = None,
     cq: str = '24',
 ) -> int:
     """Pack a single video with the mask. Optionally sync mask first"""
@@ -244,7 +340,7 @@ def pack_video(
         synced_tmp = sync_mask_to_video(mask_path, fps=fps, frame_offset=sync_frames)
         actual_mask = synced_tmp
 
-    video_w, video_h, *_ = get_video_info(video_path)
+    video_w, video_h, video_fps, video_duration = get_video_info(video_path)
     mask_w, mask_h, *_ = get_video_info(actual_mask)
 
     encoder = get_output_encoder(video_path)
@@ -253,7 +349,11 @@ def pack_video(
     print(f"Encoder: {encoder}")
     print(f"Mask: {mask_w}x{mask_h}")
 
-    cmd = create_alpha_pack_command(video_path, actual_mask, output_path, (video_w, video_h), preset=preset, cq=cq, encoder=encoder)
+    cmd = create_alpha_pack_command(
+        video_path, actual_mask, output_path, (video_w, video_h),
+        preset=preset, cq=cq, encoder=encoder,
+        duration=video_duration, fps=video_fps,
+    )
 
     rc, _ = run_ffmpeg_with_progress(cmd)
 
@@ -296,7 +396,7 @@ def main() -> int:
         help="Shift the mask by N frames before packing. Positive = mask catches up (plays earlier), negative = mask delayed (plays later) (default: disabled)"
     )
     args = parser.parse_args()
-    
+
     preset = SPEED_PRESETS[args.speed]
     cq = QUALITY_PRESETS[args.quality]
 
